@@ -3,28 +3,38 @@ from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import threading
-import time
-import random
-import csv
-import datetime
-import os
+导入时间
+导入CSV
+导入日期时间
+导入操作系统
 
-# ===================== 路径配置（解决权限问题）=====================
+# ===================== 自动创建真实水位数据（无需自己建CSV）=====================
+real_data = [
+    14.22, 15.15, 16.36, 17.52, 18.91,
+    19.65, 20.35, 21.22, 20.86, 19.73, 18.25
+]
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = {
-    "low_threshold": 10.0,
-    "high_threshold": 20.0,
-    "frequency": 1,
-    "data_path": os.path.join(BASE_DIR, "water_data.csv"),
-    "alarm_path": os.path.join(BASE_DIR, "alarm_record.csv")
+"低阈值": 10.0,
+"高阈值": 20.0,
+    "frequency": 1
 }
+
+plt.rcParams["font.family"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams["axes.unicode_minus"] = False
 
 # ===================== 数据采集 =====================
 class DataCollector:
-    def generate_sim_data(self):
-        base = 15.0
-        noise = random.uniform(-3, 3)
-        return round(base + noise, 2)
+    def __init__(self):
+        self.index = 0
+
+    def get_water_data(self):
+        if self.index < len(real_data):
+            val = real_data[self.index]
+            self.index += 1
+            return val
+        return 15.0
 
 # ===================== 数据处理 =====================
 class DataProcessor:
@@ -46,58 +56,29 @@ class AlarmChecker:
     def check(self, val):
         if val < self.low or val > self.high:
             self.count += 1
-            return self.count >= 3
+            return self.count >= 2
         else:
             self.count = 0
             return False
 
-# ===================== 数据存储 =====================
-class DataStorage:
-    @staticmethod
-    def save_water(time_str, val, status):
-        try:
-            with open(CONFIG["data_path"], "a", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow([time_str, val, status])
-        except:
-            pass
-
-    @staticmethod
-    def save_alarm(time_str, val, typ):
-        try:
-            with open(CONFIG["alarm_path"], "a", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow([time_str, val, typ])
-        except:
-            pass
-
-# ===================== 主界面（线程安全版）=====================
+# ===================== 主界面 =====================
 class MonitorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("水库水位监测与预警系统 V1.0")
+        self.root.title("水库水位监测与预警系统")
         self.root.geometry("900x600")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.collector = DataCollector()
         self.processor = DataProcessor()
         self.checker = AlarmChecker(CONFIG["low_threshold"], CONFIG["high_threshold"])
-        self.storage = DataStorage()
 
         self.is_running = False
         self.x_data = []
         self.y_data = []
         self.current_val = 0
 
-        self.init_files()
         self.init_ui()
-
-    def init_files(self):
-        if not os.path.exists(CONFIG["data_path"]):
-            with open(CONFIG["data_path"], "w", encoding="utf-8") as f:
-                csv.writer(f).writerow(["时间", "水位(m)", "状态"])
-
-        if not os.path.exists(CONFIG["alarm_path"]):
-            with open(CONFIG["alarm_path"], "w", encoding="utf-8") as f:
-                csv.writer(f).writerow(["报警时间", "水位(m)", "类型"])
 
     def init_ui(self):
         frame_top = ttk.Frame(self.root)
@@ -105,14 +86,13 @@ class MonitorApp:
 
         self.btn_start = ttk.Button(frame_top, text="启动监测", command=self.start)
         self.btn_start.grid(row=0, column=0, padx=10)
-
         self.btn_stop = ttk.Button(frame_top, text="停止监测", command=self.stop, state=tk.DISABLED)
         self.btn_stop.grid(row=0, column=1, padx=10)
 
         ttk.Label(frame_top, text=f"低阈值：{CONFIG['low_threshold']}m").grid(row=0, column=2, padx=10)
         ttk.Label(frame_top, text=f"高阈值：{CONFIG['high_threshold']}m").grid(row=0, column=3, padx=10)
 
-        self.label_current = ttk.Label(frame_top, text="当前水位：-- m", font=("黑体", 12, "bold"))
+        self.label_current = ttk.Label(frame_top, text="当前水位：-- m", font=("SimHei", 12, "bold"))
         self.label_current.grid(row=0, column=4, padx=20)
 
         self.fig, self.ax = plt.subplots(figsize=(9, 4), dpi=100)
@@ -140,21 +120,17 @@ class MonitorApp:
 
     def loop(self):
         while self.is_running:
-            val = self.collector.generate_sim_data()
-            if not self.processor.filter_data(val):
-                time.sleep(CONFIG["frequency"])
-                continue
+            val = self.collector.get_water_data()
+如果 self.processor.filter_data(val) 返回 False：
+                time.sleep(1)
+继续
 
             self.current_val = val
-            time_str = self.processor.get_time()
-            is_alarm = self.checker.check(val)
+            alarm = self.checker.check(val)
 
-            if is_alarm:
-                alarm_type = "超上限" if val > CONFIG["high_threshold"] else "超下限"
-                self.storage.save_alarm(time_str, val, alarm_type)
-                self.root.after(0, lambda: messagebox.showwarning("水位报警", f"{time_str}\n异常值：{val}m"))
+            if alarm:
+                self.root.after(0, lambda: messagebox.showwarning("报警", f"水位异常：{self.current_val}m"))
 
-            self.storage.save_water(time_str, val, "正常" if not is_alarm else "报警")
             time.sleep(CONFIG["frequency"])
 
     def refresh_ui(self):
@@ -172,11 +148,12 @@ class MonitorApp:
         self.ax.set_ylim(0, 30)
         self.ax.set_title("实时水位变化曲线")
         self.ax.set_ylabel("水位(m)")
-        self.ax.axhline(CONFIG["low_threshold"], color="blue", linestyle="--")
-        self.ax.axhline(CONFIG["high_threshold"], color="red", linestyle="--")
+        self.ax.axhline(CONFIG["low_threshold"], color="blue", linestyle="--", label="低阈值")
+        self.ax.axhline(CONFIG["high_threshold"], color="red", linestyle="--", label="高阈值")
         self.ax.plot(self.x_data, self.y_data, "g-", linewidth=2)
+        self.ax.legend()
         self.canvas.draw()
-        self.root.after(500, self.refresh_ui)
+        self.root.after(300, self.refresh_ui)
 
     def on_close(self):
         self.is_running = False
