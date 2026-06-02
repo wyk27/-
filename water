@@ -2,164 +2,145 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import threading
-导入时间
-导入CSV
-导入日期时间
-导入操作系统
+import csv
 
-# ===================== 自动创建真实水位数据（无需自己建CSV）=====================
-real_data = [
-    14.22, 15.15, 16.36, 17.52, 18.91,
-    19.65, 20.35, 21.22, 20.86, 19.73, 18.25
-]
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG = {
-"低阈值": 10.0,
-"高阈值": 20.0,
-    "frequency": 1
-}
+# ===================== 配置 =====================
+CSV_FILE_PATH = r"D:\桌面\shui\余杭区水库实时水情信息20260409.csv"
+LOW = 30.0
+HIGH = 100.0
 
 plt.rcParams["font.family"] = ["SimHei", "Microsoft YaHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-# ===================== 数据采集 =====================
+# ===================== 读取数据 =====================
 class DataCollector:
     def __init__(self):
+        self.water_list = []
         self.index = 0
+        self.load_csv()
 
-    def get_water_data(self):
-        if self.index < len(real_data):
-            val = real_data[self.index]
+    def load_csv(self):
+        try:
+            with open(CSV_FILE_PATH, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    val = float(row["库上水位"])
+                    self.water_list.append(val)
+            print(f"成功读取 {len(self.water_list)} 条数据")
+        except:
+            self.water_list = [39, 65, 70, 75, 80, 85, 90, 95, 105, 231]
+
+    def get_data(self):
+        if self.index < len(self.water_list):
+            val = self.water_list[self.index]
             self.index += 1
             return val
-        return 15.0
-
-# ===================== 数据处理 =====================
-class DataProcessor:
-    @staticmethod
-    def filter_data(value):
-        return 0 <= value <= 50
-
-    @staticmethod
-    def get_time():
-        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return 70.0
 
 # ===================== 报警判断 =====================
 class AlarmChecker:
     def __init__(self, low, high):
         self.low = low
         self.high = high
-        self.count = 0
+        self.alarmed = False
 
     def check(self, val):
         if val < self.low or val > self.high:
-            self.count += 1
-            return self.count >= 2
+            if not self.alarmed:
+                self.alarmed = True
+                return True
+            return False
         else:
-            self.count = 0
+            self.alarmed = False
             return False
 
 # ===================== 主界面 =====================
-class MonitorApp:
+class WaterMonitor:
     def __init__(self, root):
         self.root = root
-        self.root.title("水库水位监测与预警系统")
-        self.root.geometry("900x600")
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.title("余杭水库水位监测预警系统")
+        self.root.geometry("920x560")
+        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
         self.collector = DataCollector()
-        self.processor = DataProcessor()
-        self.checker = AlarmChecker(CONFIG["low_threshold"], CONFIG["high_threshold"])
+        self.checker = AlarmChecker(LOW, HIGH)
 
-        self.is_running = False
-        self.x_data = []
-        self.y_data = []
-        self.current_val = 0
+        self.after_id = None
+        self.running = False
+        self.x = []
+        self.y = []
 
-        self.init_ui()
+        self.create_ui()
 
-    def init_ui(self):
-        frame_top = ttk.Frame(self.root)
-        frame_top.pack(pady=10)
+    def create_ui(self):
+        top = ttk.Frame(self.root)
+        top.pack(pady=10)
 
-        self.btn_start = ttk.Button(frame_top, text="启动监测", command=self.start)
+        self.btn_start = ttk.Button(top, text="启动监测", command=self.start)
         self.btn_start.grid(row=0, column=0, padx=10)
-        self.btn_stop = ttk.Button(frame_top, text="停止监测", command=self.stop, state=tk.DISABLED)
+        self.btn_stop = ttk.Button(top, text="停止", command=self.stop, state=tk.DISABLED)
         self.btn_stop.grid(row=0, column=1, padx=10)
 
-        ttk.Label(frame_top, text=f"低阈值：{CONFIG['low_threshold']}m").grid(row=0, column=2, padx=10)
-        ttk.Label(frame_top, text=f"高阈值：{CONFIG['high_threshold']}m").grid(row=0, column=3, padx=10)
+        ttk.Label(top, text=f"安全区间：{LOW} ~ {HIGH} m").grid(row=0, column=2, padx=10)
+        self.lab = ttk.Label(top, text="当前水位：-- m", font=("黑体",12,"bold"))
+        self.lab.grid(row=0, column=4, padx=20)
 
-        self.label_current = ttk.Label(frame_top, text="当前水位：-- m", font=("SimHei", 12, "bold"))
-        self.label_current.grid(row=0, column=4, padx=20)
-
-        self.fig, self.ax = plt.subplots(figsize=(9, 4), dpi=100)
+        self.fig, self.ax = plt.subplots(figsize=(9,4), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, self.root)
         self.canvas.get_tk_widget().pack()
 
-        self.ax.set_ylim(0, 30)
-        self.ax.set_title("实时水位变化曲线")
-        self.ax.set_ylabel("水位(m)")
-        self.ax.axhline(CONFIG["low_threshold"], color="blue", linestyle="--", label="低阈值")
-        self.ax.axhline(CONFIG["high_threshold"], color="red", linestyle="--", label="高阈值")
-        self.ax.legend()
-
     def start(self):
-        self.is_running = True
+        self.running = True
         self.btn_start.config(state=tk.DISABLED)
         self.btn_stop.config(state=tk.NORMAL)
-        threading.Thread(target=self.loop, daemon=True).start()
-        self.refresh_ui()
+        self.update()
 
     def stop(self):
-        self.is_running = False
+        self.running = False
         self.btn_start.config(state=tk.NORMAL)
         self.btn_stop.config(state=tk.DISABLED)
+如果 self.after_id:
+            self.root.after_cancel(self.after_id)
 
-    def loop(self):
-        while self.is_running:
-            val = self.collector.get_water_data()
-如果 self.processor.filter_data(val) 返回 False：
-                time.sleep(1)
-继续
-
-            self.current_val = val
-            alarm = self.checker.check(val)
-
-            if alarm:
-                self.root.after(0, lambda: messagebox.showwarning("报警", f"水位异常：{self.current_val}m"))
-
-            time.sleep(CONFIG["frequency"])
-
-    def refresh_ui(self):
-        if not self.is_running:
+    def update(self):
+如果self.running为假：
             return
-        self.label_current.config(text=f"当前水位：{self.current_val} m")
-        self.x_data.append(len(self.x_data))
-        self.y_data.append(self.current_val)
 
-        if len(self.x_data) > 30:
-            self.x_data.pop(0)
-            self.y_data.pop(0)
+        val = self.collector.get_data()
+        self.lab.config(text=f"当前水位：{val:.1f} m")
+
+        self.x.append(len(self.x))
+        self.y.append(val)
+        if len(self.x) > 50:
+            self.x.pop(0)
+            self.y.pop(0)
 
         self.ax.clear()
-        self.ax.set_ylim(0, 30)
-        self.ax.set_title("实时水位变化曲线")
+        self.ax.set_ylim(0, 250)
+        self.ax.set_title("余杭水库实时水位曲线")
         self.ax.set_ylabel("水位(m)")
-        self.ax.axhline(CONFIG["low_threshold"], color="blue", linestyle="--", label="低阈值")
-        self.ax.axhline(CONFIG["high_threshold"], color="red", linestyle="--", label="高阈值")
-        self.ax.plot(self.x_data, self.y_data, "g-", linewidth=2)
+        self.ax.axhline(HIGH, color="red", linestyle="--", label=f"高阈值 {HIGH}m")
+        self.ax.axhline(LOW, color="blue", linestyle="--", label=f"低阈值 {LOW}m")
+        self.ax.plot(self.x, self.y, color="green", linewidth=2)
         self.ax.legend()
         self.canvas.draw()
-        self.root.after(300, self.refresh_ui)
 
-    def on_close(self):
-        self.is_running = False
+        # 报警逻辑
+如果 self.checker.check(val):
+如果 val > HIGH:
+                messagebox.showwarning("预警", f"高水位报警！当前：{val:.1f}m")
+否则：
+                messagebox.showwarning("预警", f"低水位报警！当前：{val:.1f}m")
+
+        self.after_id = self.root.after(500, self.update)
+
+    def close_app(self):
+        self.running = False
+如果 self.after_id:
+            self.root.after_cancel(self.after_id)
         self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = MonitorApp(root)
+    app = WaterMonitor(root)
     root.mainloop()
